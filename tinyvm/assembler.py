@@ -505,12 +505,20 @@ class Assembler:
         def reg(index: int) -> int:
             return self._as_register(ops[index], line)
 
-        def value16(index: int) -> tuple[int, int]:
+        def value16(index: int, signed_ok: bool = False) -> tuple[int, int]:
             operand = ops[index]
             if operand.kind == "label":
                 v = self._resolve(str(operand.value), line.line, operand.col)
             else:
-                v = self._check_u16(operand.value, line.line, operand.col)
+                v = int(operand.value)
+                low = -0x8000 if signed_ok else 0
+                if not low <= v <= U16_MAX:
+                    self._error(
+                                        "operand out of range "
+                                        f"({low}-{U16_MAX})",
+                                        line.line, operand.col,
+                                    )
+                v &= U16_MAX
             return (v >> 8) & 0xFF, v & 0xFF
 
         if form is OperandForm.NONE:
@@ -530,7 +538,7 @@ class Assembler:
             b[2], b[3] = value16(1)
         elif form is OperandForm.RI16:
             b[1] = reg(0)
-            b[2], b[3] = value16(1)
+            b[2], b[3] = value16(1, signed_ok=True)
         elif form is OperandForm.R_IND:
             if ops[0].kind != "reg" or ops[1].kind != "mem":
                 self._error("expected Rd, [Rs]", line.line, ops[0].col)
