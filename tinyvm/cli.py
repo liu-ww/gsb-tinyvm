@@ -87,7 +87,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     except (AssemblerError, ValueError) as exc:
         print(f"{args.input}: {exc}", file=sys.stderr)
         return 1
-    vm = VM()
+    vm = VM(stdout=sys.stdout, stdin=sys.stdin)
     vm.trace = args.trace
     vm.load_program(program)
     try:
