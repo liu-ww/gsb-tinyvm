@@ -204,7 +204,9 @@ class VM:
         if self.sp >= STACK_TOP:
             raise StackUnderflow(self.pc)
         value = self.memory.read_word(self.sp)
-        self.sp = (self.sp + 2) & 0xFFFF
+        # Use the 0x10000 sentinel (not & 0xFFFF) so a fully drained stack
+        # reports the empty-stack pointer instead of 0.
+        self.sp = self.sp + 2
         return value
 
     # ------------------------------------------------------------------
