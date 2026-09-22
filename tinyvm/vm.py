@@ -511,8 +511,21 @@ class VM:
         self.set_r(a, self.memory.read_word(address))
 
     def _op_store_mem(self, _op: int, a: int, b: int, c: int) -> None:
+        # Two encodings share opcode 0x23:
+        #   * absolute:  A=addr.lo, B=addr.hi (B >= 0x40 for data/heap/stack),
+        #                C = source register.
+        #   * register-indirect: B in 0..15 (cannot be a data high byte),
+        #                A = register holding the address, B = source reg.
+        # An absolute address with high byte <= 0x0F would sit inside the
+        # read-only IVT/code segment and always trap, so the forms never
+        # disagree on reachable memory.
+        if b <= 0x0F:
+            address = self.r(a)
+            self._check_data_range(address, 2)
+            self.memory.write_word(address, self.r(b))
+            return
         address = self._addr(a, b)
-        self._check_data_read(address, 2)
+        self._check_data_range(address, 2)
         self.memory.write_word(address, self.r(c))
 
     def _op_push(self, _op: int, a: int, b: int, c: int) -> None:

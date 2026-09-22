@@ -23,7 +23,8 @@ from .errors import TinyVMError
 
 MAGIC = b"TVM1"
 VERSION = 1
-HEADER_SIZE = 19
+_HEADER_FORMAT = "<4sBHHIHHI"
+HEADER_SIZE = struct.calcsize(_HEADER_FORMAT)
 
 
 class ProgramFormatError(TinyVMError):
@@ -43,7 +44,7 @@ class Program:
         if len(self.vectors) > 65535:
             raise ProgramFormatError("too many IVT entries")
         header = struct.pack(
-            "<4sBHHIHHI",
+            _HEADER_FORMAT,
             MAGIC,
             VERSION,
             self.entry & 0xFFFF,
@@ -63,7 +64,7 @@ class Program:
         if len(blob) < HEADER_SIZE:
             raise ProgramFormatError("file too short to be a .tvm image")
         magic, version, entry, code_base, code_len, data_base, data_len, nvec = \
-            struct.unpack_from("<4sBHHIHHI", blob, 0)
+            struct.unpack_from(_HEADER_FORMAT, blob, 0)
         if magic != MAGIC:
             raise ProgramFormatError(f"bad magic {magic!r}, expected {MAGIC!r}")
         if version != VERSION:

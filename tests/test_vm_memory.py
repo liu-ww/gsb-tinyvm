@@ -365,3 +365,36 @@ def test_halt_stops_execution_at_next_instruction():
 def test_unknown_syscall_number_traps():
     with pytest.raises(Trap, match="9"):
         run(".code\n.entry s\ns:\nSYSCALL 9\n")
+
+
+# ---------------------------------------------------------------------
+# STORE_MEM register-indirect form (used by the bubble sort example)
+# ---------------------------------------------------------------------
+def test_store_mem_register_indirect_swaps_words():
+    src = """
+.code
+.entry s
+s:
+  LEA R1, x
+  LEA R2, y
+  LOAD_REG R3, R1
+  LOAD_REG R4, R2
+  STORE_MEM R1, R4
+  STORE_MEM R2, R3
+  LOAD_MEM R5, x
+  LOAD_MEM R6, y
+  SYSCALL 4
+.data
+x: .word 100
+y: .word 200
+"""
+    vm = run(src)
+    assert vm.r(5) == 200 and vm.r(6) == 100
+    assert vm.memory.read_word(0x4000) == 200
+    assert vm.memory.read_word(0x4002) == 100
+
+
+def test_store_mem_indirect_address_in_code_traps():
+    src = ".code\n.entry s\ns:\nLEA R1,s\nSTORE_MEM R1,R0\nSYSCALL 4\n"
+    with pytest.raises(MemoryFault):
+        run(src)

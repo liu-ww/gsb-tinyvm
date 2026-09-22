@@ -25,6 +25,7 @@ from .isabits import (
     DEFAULT_ENTRY,
     ENTRY_LABEL,
     OPCODES,
+    OP_STORE_MEM,
     SIGNATURES,
 )
 from .program import Program
@@ -250,10 +251,7 @@ class _AssemblerState:
         code = bytearray(self.code_end - self.code_base)
 
         for record in self.instructions:
-            operands = [
-                self._encode_operand(record.line, record.opcode, i, token)
-                for i, token in enumerate(record.line.operands)
-            ]
+            operands = self._encode_operands(record)
             encoded = encode_instruction(record.opcode, operands)
             offset = record.address - self.code_base
             code[offset:offset + 4] = encoded
@@ -286,6 +284,21 @@ class _AssemblerState:
             data=bytes(data),
             vectors=dict(resolved_vectors),
         )
+
+    def _encode_operands(self, record: _InstructionRecord) -> list:
+        line = record.line
+        # STORE_MEM: "STORE_MEM Raddr, Rsrc" (register-indirect) vs
+        # "STORE_MEM abs_addr, Rsrc" (absolute).
+        if record.opcode == OP_STORE_MEM and line.operands[0].upper().startswith("R"):
+            return [
+                ("indirect",
+                 self._parse_register(line, 0, line.operands[0]),
+                 self._parse_register(line, 1, line.operands[1])),
+            ]
+        return [
+            self._encode_operand(line, record.opcode, i, token)
+            for i, token in enumerate(line.operands)
+        ]
 
     def _encode_operand(self, line: _Line, opcode: int, index: int,
                         token: str):

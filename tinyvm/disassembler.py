@@ -64,8 +64,10 @@ def _render_instruction(opcode: int, a: int, b: int, c: int) -> str | None:
     kinds = [kind for kind in signature if kind]
     raw = {0: a, 1: b, 2: c}
     parts: List[str] = []
-    # STORE_MEM: A/B = little-endian address, C = source register.
+    # STORE_MEM: absolute A/B=addr,C=src (b>=0x40); indirect A=addrreg,B=src.
     if opcode == OP_STORE_MEM:
+        if b <= 0x0F:
+            return f"STORE_MEM R{a}, R{b}"
         address = a | (b << 8)
         return f"STORE_MEM 0x{address:04x}, R{c}"
     for index, kind in enumerate(kinds):

@@ -31,17 +31,40 @@ def encode_instruction(opcode: int, operands: Sequence) -> bytes:
     sig = SIGNATURES.get(opcode)
     if sig is None:
         raise EncodeError(f"unknown opcode 0x{opcode:02x}")
-    expected = [kind for kind in sig if kind]
-    if len(operands) != len(expected):
-        raise EncodeError(
-            f"operand count mismatch: expected {len(expected)}, got {len(operands)}"
-        )
 
     words = [opcode, 0, 0, 0]
     values = list(operands)
 
-    # STORE_MEM is the only instruction whose two logical operands do not
-    # occupy consecutive operand bytes: address goes in A/B, source reg C.
+    # STORE_MEM has two forms:
+    #   * absolute:      (address, src_reg)
+    #                    -> A=addr.lo, B=addr.hi, C=src_reg
+    #   * reg-indirect:  ("indirect", addr_reg, src_reg)
+    #                    -> A=addr_reg, B=src_reg, C=0
+    # Runtime disambiguates via B <= 0x0F (register) vs the absolute
+    # form's data high byte (>= 0x40 for every reachable target).
+    indirect = (
+        opcode == OP_STORE_MEM and len(values) == 1
+        and isinstance(values[0], tuple) and values[0]
+        and values[0][0] == "indirect"
+    )
+    if indirect:
+        values = list(values[0])
+    if opcode == OP_STORE_MEM and values and values[0] == "indirect":
+        if len(values) != 3:
+            raise EncodeError(
+                "register-indirect STORE_MEM needs ('indirect', addr, src)"
+            )
+        _, addr_reg, src_reg = values
+        if not (0 <= addr_reg <= 15 and 0 <= src_reg <= 15):
+            raise EncodeError("register-indirect operands must be R0..R15")
+        return bytes([opcode, addr_reg, src_reg, 0])
+
+    expected = [kind for kind in sig if kind]
+    if len(values) != len(expected):
+        raise EncodeError(
+            f"operand count mismatch: expected {len(expected)}, got {len(values)}"
+        )
+
     if opcode == OP_STORE_MEM:
         address, register = values
         if not (0 <= address <= 0xFFFF):
@@ -63,32 +86,22 @@ def encode_instruction(opcode: int, operands: Sequence) -> bytes:
                 )
             words[slot] = encode_tagged_immediate(payload)
 
-    def put_reg(slot: int, raw: int) -> None:
-        if not (0 <= raw <= 15):
-            raise EncodeError(f"register {raw} out of range (0..15)")
-        words[slot] = raw
-
-    def put_u8(slot: int, raw: int) -> None:
-        if not (0 <= raw <= 255):
-            raise EncodeError(f"immediate {raw} out of range (0..255)")
-        words[slot] = raw
-
-    def put_addr(low_slot: int, raw: int) -> None:
-        if not (0 <= raw <= 0xFFFF):
-            raise EncodeError(f"address 0x{raw:x} out of range")
-        words[low_slot] = raw & 0xFF
-        words[low_slot + 1] = (raw >> 8) & 0xFF
-
-    # Encoding is position sensitive; drive off logical operand index.
     for index, (kind, raw) in enumerate(zip(expected, values)):
         if kind == "r":
-            put_reg(index + 1, raw)
+            if not (0 <= raw <= 15):
+                raise EncodeError(f"register {raw} out of range (0..15)")
+            words[index + 1] = raw
         elif kind == "ri":
             put_tagged(index + 1, raw)
         elif kind == "u8":
-            put_u8(index + 1, raw)
+            if not (0 <= raw <= 255):
+                raise EncodeError(f"immediate {raw} out of range (0..255)")
+            words[index + 1] = raw
         elif kind == "addr16":
-            put_addr(index + 1, raw)
+            if not (0 <= raw <= 0xFFFF):
+                raise EncodeError(f"address 0x{raw:x} out of range")
+            words[index + 1] = raw & 0xFF
+            words[index + 2] = (raw >> 8) & 0xFF
         else:  # pragma: no cover
             raise EncodeError(f"internal error: unknown operand kind {kind!r}")
     return bytes(words)
