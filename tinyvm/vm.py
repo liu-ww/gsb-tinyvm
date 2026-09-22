@@ -276,17 +276,16 @@ class VM:
     # arithmetic / logic
     # ------------------------------------------------------------------
     def _binary_operands(self, a: int, b: int, c: int):
-        """Return (left operand, right operand, destination register).
+        """Return ``(rs_value, ri_value, dest)`` for ``OP rd, rs, ri``.
 
-        Semantics ``OP rd, rs, ri`` read ``rs`` from operand A (which is
-        also the destination for two-address style operations) and ``ri``
-        from operand C.  Operand B holds the second source register for
-        three-operand forms.
+        Operand A selects the destination register, operand B the first
+        source register and operand C the second source as either a
+        register or a tagged immediate.
         """
         return self.r(b), self._reg_or_imm(c), a
 
     def _op_add(self, _op: int, a: int, b: int, c: int) -> None:
-        x, y, dest = self.r(b), self._reg_or_imm(c), a
+        x, y, dest = self._binary_operands(a, b, c)
         unsigned = x + y
         result = u16(unsigned)
         self.set_r(dest, result)
@@ -297,7 +296,7 @@ class VM:
         )
 
     def _op_sub(self, _op: int, a: int, b: int, c: int) -> None:
-        x, y, dest = self.r(b), self._reg_or_imm(c), a
+        x, y, dest = self._binary_operands(a, b, c)
         unsigned = x - y
         result = u16(unsigned)
         self.set_r(dest, result)
@@ -308,22 +307,30 @@ class VM:
         )
 
     def _op_mul(self, _op: int, a: int, b: int, c: int) -> None:
-        x = s16(self.r(b))
-        y = s16(self._reg_or_imm(c))
+        # Operands are treated as unsigned 16-bit values for the stored
+        # product and the CARRY flag (CARRY set when the 32-bit product's
+        # upper half is non-zero); the low 16 bits match signed multiply.
+        x = self.r(b)
+        y = self._reg_or_imm(c)
         product = x * y
-        result = u16(product)
+        result = product & 0xFFFF
         self.set_r(a, result)
-        self._set_flags(result, carry=product > 0xFFFF or product < -0x10000)
+        self._set_flags(result, carry=product > 0xFFFF)
 
     def _op_div(self, _op: int, a: int, b: int, c: int) -> None:
         divisor = self._reg_or_imm(c)
         if divisor == 0:
             raise DivideByZero(self.pc)
         dividend = s16(self.r(b))
-        quotient = int(dividend / s16(divisor))  # truncate toward zero
+        divisor = s16(divisor)
+        # Integer truncation toward zero, matching C-like division.
+        quotient = abs(dividend) // abs(divisor)
+        if (dividend < 0) != (divisor < 0):
+            quotient = -quotient
+        overflow = not (-0x8000 <= quotient <= 0x7FFF)
         result = u16(quotient)
         self.set_r(a, result)
-        self._set_flags(result, overflow=(quotient == -32768))
+        self._set_flags(result, overflow=overflow)
 
     def _op_mod(self, _op: int, a: int, b: int, c: int) -> None:
         divisor = self._reg_or_imm(c)
@@ -353,24 +360,30 @@ class VM:
         self._set_flags(result)
 
     def _op_shl(self, _op: int, a: int, b: int, c: int) -> None:
-        amount = self._reg_or_imm(c)
+        amount = self._reg_or_imm(c) & 0xFFFF
         source = self.r(b)
         if amount >= 16:
             result, carry = 0, False
+        elif amount == 0:
+            result, carry = source, False
         else:
-            result = u16(source << amount)
-            carry = bool(source & (1 << (15 - amount)))
+            shifted = source << amount
+            result = shifted & 0xFFFF
+            # CARRY = last bit shifted out (bit 15 of the pre-truncated value)
+            carry = bool(shifted & 0x10000)
         self.set_r(a, result)
         self._set_flags(result, carry=carry)
 
     def _op_shr(self, _op: int, a: int, b: int, c: int) -> None:
-        amount = self._reg_or_imm(c)
+        amount = self._reg_or_imm(c) & 0xFFFF
         source = self.r(b)
         if amount >= 16:
             result, carry = 0, False
+        elif amount == 0:
+            result, carry = source, False
         else:
             result = source >> amount
-            carry = bool(source & (1 << (amount - 1))) if amount else False
+            carry = bool(source & (1 << (amount - 1)))
         self.set_r(a, result)
         self._set_flags(result, carry=carry)
 
@@ -404,9 +417,11 @@ class VM:
 
     def _op_dec(self, _op: int, a: int, b: int, c: int) -> None:
         x = self.r(a)
-        result = u16(x - 1)
+        unsigned = x - 1
+        result = u16(unsigned)
+        # CARRY is the subtraction borrow (x - 1 wrapped); OVERFLOW on 0x8000.
         self.set_r(a, result)
-        self._set_flags(result, carry=False, overflow=x == 0x8000)
+        self._set_flags(result, carry=unsigned < 0, overflow=x == 0x8000)
 
     # ------------------------------------------------------------------
     # control flow
@@ -427,10 +442,10 @@ class VM:
         self._branch(self._addr(a, b), not (self.flags & FLAG_ZERO))
 
     def _signed_less(self) -> bool:
+        # Signed less-than after CMP/SUB: SF xor OF (two's complement rule).
         sign = bool(self.flags & FLAG_SIGN)
         overflow = bool(self.flags & FLAG_OVERFLOW)
-        carry = bool(self.flags & FLAG_CARRY)
-        return (sign != overflow) or carry
+        return sign != overflow
 
     def _op_jlt(self, _op: int, a: int, b: int, c: int) -> None:
         self._branch(self._addr(a, b), self._signed_less())
