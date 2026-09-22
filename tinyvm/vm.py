@@ -524,12 +524,28 @@ class VM:
     def _op_lea(self, _op: int, a: int, b: int, c: int) -> None:
         self.set_r(a, self._addr(b, c))
 
-    def _check_data_read(self, address: int, size: int) -> None:
+    def _check_data_range(self, address: int, size: int) -> None:
+        """Validate a contiguous guest data access.
+
+        Every accessed byte must live at or above 0x4000 (i.e. outside the
+        IVT and the read-only code segment) and the range may not wrap past
+        the top of the 16-bit address space.
+        """
+        if size < 0:
+            raise MemoryFault(address, "negative access size", self.pc)
+        if address < CODE_END:
+            raise MemoryFault(
+                address, "data access inside code/IVT segment", self.pc
+            )
         end = address + size
-        for candidate in (address, end - 1):
-            if candidate >= CODE_END:
-                continue
-            raise MemoryFault(candidate, "data access inside code/IVT segment")
+        if end > 0x10000:
+            raise MemoryFault(
+                0xFFFF, "data access wraps past address space", self.pc
+            )
+
+    def _check_data_read(self, address: int, size: int) -> None:
+        # Backwards-compatible wrapper for word-sized data accesses.
+        self._check_data_range(address, size)
 
     def _op_syscall(self, _op: int, a: int, b: int, c: int) -> None:
         number = a
@@ -613,6 +629,10 @@ class VM:
         return "".join(chars)
 
     def _read_cstring(self, address: int) -> bytes:
+        if address < CODE_END:
+            raise MemoryFault(
+                address, "cstring access inside code/IVT segment", self.pc
+            )
         out = bytearray()
         cursor = address
         for _ in range(0x10000):
@@ -620,7 +640,11 @@ class VM:
             if byte == 0:
                 break
             out.append(byte)
-            cursor = (cursor + 1) & 0xFFFF
+            cursor += 1
+            if cursor > 0xFFFF:
+                raise MemoryFault(
+                    0xFFFF, "unterminated string reached end of memory", self.pc
+                )
         return bytes(out)
 
     # ------------------------------------------------------------------
