@@ -150,7 +150,8 @@ class _AssemblerState:
                 continue
             if op == ".VECTOR":
                 vector = self._int_operand(line, 0, 0, 255)
-                self.vectors[vector] = (line.operands[1], line)
+                handler_col = line.operand_columns[1]
+                self.vectors[vector] = (line.operands[1], line, handler_col)
                 continue
 
             if section == SECTION_CODE:
@@ -170,7 +171,7 @@ class _AssemblerState:
             else:
                 record, data_pc = self._layout_data(line, data_pc)
                 self.data_records.append(record)
-                if data_pc > DATA_END:
+                if data_pc >= DATA_END:
                     raise AssemblerError(
                         "data segment overflow (past 0x7FFF)", line.number, 1
                     )
@@ -225,8 +226,12 @@ class _AssemblerState:
             value = _parse_number(text)
         except ValueError:
             try:
-                return self._absolute(line, token)
-            except AssemblerError:
+                return self._absolute(
+                    line, token, line.operand_columns[index]
+                )
+            except AssemblerError as exc:
+                if "undefined label" in str(exc) or "out of 16-bit" in str(exc):
+                    raise
                 raise AssemblerError(
                     f".word expects a number or label, got '{token}'",
                     line.number, line.operand_columns[index],
@@ -264,8 +269,8 @@ class _AssemblerState:
         # Resolve (possibly forward) vector labels and validate handlers.
         resolved_vectors: Dict[int, int] = {}
         for vector, value in self.vectors.items():
-            expr, line = value  # type: ignore[misc]
-            handler = self._absolute(line, expr)
+            expr, line, handler_col = value  # type: ignore[misc]
+            handler = self._absolute(line, expr, handler_col)
             if not (CODE_START <= handler < CODE_END):
                 raise AssemblerError(
                     f"vector {vector} handler 0x{handler:04x} outside code segment"
@@ -295,7 +300,9 @@ class _AssemblerState:
                 return ("imm", self._int_token(line, index, token[1:], -64, 63))
             return ("reg", self._parse_register(line, index, token))
         if kind == "addr16":
-            return self._absolute(line, token)
+            return self._absolute(
+                line, token, line.operand_columns[index]
+            )
         raise AssemblerError(
             f"internal error: cannot encode {kind}", line.number,
             line.operand_columns[index],
@@ -357,11 +364,14 @@ class _AssemblerState:
             )
         return value
 
-    def _absolute(self, line: _Line, token: str) -> int:
+    def _absolute(self, line: _Line, token: str,
+                  column: Optional[int] = None) -> int:
         """Resolve a label, number or ``label + const`` to a 16-bit address."""
         expr = token.replace(" ", "")
         match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)([+-]\d+)?", expr)
-        col = line.operand_columns[0] if line.operand_columns else 1
+        if column is None:
+            column = line.operand_columns[0] if line.operand_columns else 1
+        col = column
         if match:
             name, offset_text = match.group(1), match.group(2)
             offset = int(offset_text) if offset_text else 0
