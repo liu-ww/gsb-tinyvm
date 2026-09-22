@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import List
 
-from .isabits import MNEMONICS, SIGNATURES, decode_tagged_byte
+from .isabits import MNEMONICS, OP_STORE_MEM, SIGNATURES, decode_tagged_byte
 from .program import Program
 
 
@@ -64,6 +64,10 @@ def _render_instruction(opcode: int, a: int, b: int, c: int) -> str | None:
     kinds = [kind for kind in signature if kind]
     raw = {0: a, 1: b, 2: c}
     parts: List[str] = []
+    # STORE_MEM: A/B = little-endian address, C = source register.
+    if opcode == OP_STORE_MEM:
+        address = a | (b << 8)
+        return f"STORE_MEM 0x{address:04x}, R{c}"
     for index, kind in enumerate(kinds):
         byte = raw[index]
         if kind == "r":

@@ -207,7 +207,7 @@ class _AssemblerState:
                 raise AssemblerError(".word needs at least one value", line.number, 1)
             raw = b""
             for i, token in enumerate(line.operands):
-                value = self._absolute(line, token)
+                value = self._word_operand(line, i, token)
                 raw += bytes([value & 0xFF, (value >> 8) & 0xFF])
             return _DataRecord(line, pc, "bytes", raw), pc + len(raw)
         if op == ".SPACE":
@@ -217,6 +217,26 @@ class _AssemblerState:
             f"unknown directive '{line.op}' in .data section",
             line.number, line.op_column,
         )
+
+    def _word_operand(self, line: "_Line", index: int, token: str) -> int:
+        """Resolve a ``.word`` value: signed/unsigned int or a label."""
+        text = token.strip()
+        try:
+            value = _parse_number(text)
+        except ValueError:
+            try:
+                return self._absolute(line, token)
+            except AssemblerError:
+                raise AssemblerError(
+                    f".word expects a number or label, got '{token}'",
+                    line.number, line.operand_columns[index],
+                )
+        if not (-0x8000 <= value <= 0xFFFF):
+            raise AssemblerError(
+                f".word value {value} out of range (-32768..65535)",
+                line.number, line.operand_columns[index],
+            )
+        return value & 0xFFFF
 
     # ------------------------------------------------------------------
     # pass 2: emit bytes

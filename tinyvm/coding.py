@@ -14,7 +14,13 @@ from __future__ import annotations
 
 from typing import Sequence, Tuple
 
-from .isabits import IMM_MAX, IMM_MIN, SIGNATURES, encode_tagged_immediate
+from .isabits import (
+    IMM_MAX,
+    IMM_MIN,
+    OP_STORE_MEM,
+    SIGNATURES,
+    encode_tagged_immediate,
+)
 
 
 class EncodeError(ValueError):
@@ -33,6 +39,16 @@ def encode_instruction(opcode: int, operands: Sequence) -> bytes:
 
     words = [opcode, 0, 0, 0]
     values = list(operands)
+
+    # STORE_MEM is the only instruction whose two logical operands do not
+    # occupy consecutive operand bytes: address goes in A/B, source reg C.
+    if opcode == OP_STORE_MEM:
+        address, register = values
+        if not (0 <= address <= 0xFFFF):
+            raise EncodeError(f"address 0x{address:x} out of range")
+        if not (0 <= register <= 15):
+            raise EncodeError(f"register {register} out of range (0..15)")
+        return bytes([opcode, address & 0xFF, (address >> 8) & 0xFF, register])
 
     def put_tagged(slot: int, raw: Tuple[str, int] | int) -> None:
         tag, payload = raw if isinstance(raw, tuple) else ("reg", raw)
