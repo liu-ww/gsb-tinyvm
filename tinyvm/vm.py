@@ -75,6 +75,7 @@ class VM:
         # tracked as a plain integer and mirrored into the register file.
         self.registers = [0] * 20
         self._sp = STACK_TOP
+        self._fp = STACK_TOP
         self.pc = CODE_START
         self.fp = STACK_TOP
         self.flags = 0
@@ -120,18 +121,20 @@ class VM:
 
     @sp.setter
     def sp(self, value: int) -> None:
-        value &= 0xFFFF if value > 0xFFFF else 0xFFFF
-        # allow 0x10000 (empty stack) as well as 0..0xFFFF
-        value = value % 0x10001
+        # The empty stack sentinel 0x10000 is representable here; the
+        # register-file mirror holds it as 0x0000 (one-past-top).
+        value %= 0x10001
         self._sp = value
         self.registers[REG_SP] = value & 0xFFFF
 
     @property
     def fp(self) -> int:
-        return self.registers[REG_FP]
+        return self._fp
 
     @fp.setter
     def fp(self, value: int) -> None:
+        value %= 0x10001
+        self._fp = value
         self.registers[REG_FP] = value & 0xFFFF
 
     @property
@@ -163,6 +166,8 @@ class VM:
         self.pc = program.entry
         self._sp = STACK_TOP
         self.registers[REG_SP] = 0
+        self._fp = STACK_TOP
+        self.registers[REG_FP] = 0
         self.fp = STACK_TOP
         self.flags = 0
         for i in range(NUM_GP_REGISTERS):
@@ -479,7 +484,9 @@ class VM:
         self.set_r(a, b | (c << 8))
 
     def _op_load_reg(self, _op: int, a: int, b: int, c: int) -> None:
-        self.set_r(a, self.memory.read_word(self.r(b)))
+        address = self.r(b)
+        self._check_data_read(address, 2)
+        self.set_r(a, self.memory.read_word(address))
 
     def _op_load_mem(self, _op: int, a: int, b: int, c: int) -> None:
         address = self._addr(b, c)
